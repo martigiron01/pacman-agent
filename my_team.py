@@ -61,11 +61,11 @@ class BaseAgent(CaptureAgent):
 
 class OffensiveAgent(BaseAgent):
     """
-    Offensive agent that collects food and safely returns to its own side to deposit it.
+    Offensive agent that collects food and safely returns to its midfield when it has collected enough food.
     """
     def choose_action(self, game_state):
         """
-        Selects the optimal action for collecting food, avoiding enemies, and returning safely.
+        Selects the optimal action for collecting food, avoiding enemies, and returning to midfield after collecting 8 food.
         """
         enemies = self.get_visible_enemies(game_state)
         food_list = self.get_food(game_state).as_list()
@@ -73,41 +73,54 @@ class OffensiveAgent(BaseAgent):
 
         # Get carried food count
         carried_food = game_state.get_agent_state(self.index).num_carrying
+        score = game_state.get_score()
+        threshold = self.calculate_food_threshold(score)
 
-        # Define the boundary line to return to
-        boundary = self.get_boundary_positions(game_state)
-        closest_boundary = min(boundary, key=lambda b: self.distancer.get_distance(my_pos, b))
+        # Define the boundary (midfield) to return to
+        midfield = self.get_midfield_positions(game_state)
+        closest_midfield = min(midfield, key=lambda b: self.distancer.get_distance(my_pos, b))
 
-        # Decide whether to collect food or return
-        if carried_food >= 5 or self.is_threatened(my_pos, enemies):
-            # Prioritize returning to the boundary if carrying too much food or threatened
-            path = self.a_star_search(game_state, my_pos, closest_boundary, enemies)
-            if path and len(path) > 1:
-                return self.get_direction(my_pos, path[1])
+        # If the agent has enough food or is threatened, return to midfield
+        if carried_food >= threshold or self.is_threatened(my_pos, enemies):
+            # High likelihood of returning to midfield when carrying enough food
+            if random.random() < 0.8:  # 80% chance to return to midfield
+                path = self.a_star_search(game_state, my_pos, closest_midfield, enemies)
+                if path and len(path) > 1:
+                    return self.get_direction(my_pos, path[1])
+            else:
+                # Still try to collect food in some cases with a lower chance
+                if food_list:
+                    closest_food = min(food_list, key=lambda f: self.distancer.get_distance(my_pos, f))
+                    path = self.a_star_search(game_state, my_pos, closest_food, enemies)
+                    if path and len(path) > 1:
+                        return self.get_direction(my_pos, path[1])
+
         elif food_list:
-            # Collect food if safe
+            # Collect food if it's safe and we haven't reached the threshold
             closest_food = min(food_list, key=lambda f: self.distancer.get_distance(my_pos, f))
             path = self.a_star_search(game_state, my_pos, closest_food, enemies)
             if path and len(path) > 1:
                 return self.get_direction(my_pos, path[1])
 
-        # Fallback: Choose a safe random action
+        # Fallback: Choose a safe random action if no clear path
         safe_actions = self.get_safe_actions(game_state, enemies)
         if safe_actions:
             return random.choice(safe_actions)
 
         return Directions.STOP  # Stop if no safe action is available
 
-    def get_boundary_positions(self, game_state):
+    def get_midfield_positions(self, game_state):
         """
-        Returns a list of positions on the boundary of the agent's side of the field.
+        Returns a list of positions in the midfield of the agent's field of play.
+        Midfield is typically near the center of the agent's side.
         """
         layout = game_state.data.layout
         mid_x = layout.width // 2
         team_side = range(mid_x) if self.red else range(mid_x, layout.width)
-        boundary = [(mid_x - 1, y) if self.red else (mid_x, y)
-                    for y in range(layout.height) if not game_state.has_wall(mid_x - 1 if self.red else mid_x, y)]
-        return boundary
+        
+        # Midfield will be around the center of the agent's half
+        midfield = [(mid_x, y) for y in range(layout.height) if not game_state.has_wall(mid_x, y)]
+        return midfield
 
     def is_threatened(self, position, enemies):
         """
@@ -143,7 +156,19 @@ class OffensiveAgent(BaseAgent):
             if pos and all(self.distancer.get_distance(pos, enemy) > 2 for enemy in enemies):
                 safe_actions.append(action)
         return safe_actions
-
+    
+    def calculate_food_threshold(self, score):
+        """
+        Calculates the dynamic food threshold based on the agent's score.
+        The more points the agent has, the less food it needs to return with.
+        """
+        if score > 10:  # High score, return with 2 food
+            return 2
+        elif score > 5:  # Mid-range score, return with 4 food
+            return 4
+        else:  # Low score, return with 6 food
+            return 6
+        
     def a_star_search(self, game_state, start, goal, enemies):
         """
         Implements A* algorithm to find the shortest path from start to goal while avoiding enemies.
@@ -206,6 +231,7 @@ class OffensiveAgent(BaseAgent):
         elif dy == -1:
             return Directions.SOUTH
         return Directions.STOP
+
 
 
 
